@@ -1,0 +1,132 @@
+name: Build WipeVault
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'   # Triggers on version tags like v1.0.0, v1.0.1, etc.
+
+permissions:
+  contents: write  # Required to create GitHub Releases and upload assets
+
+jobs:
+
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: WipeVault.exe
+            asset_name: WipeVault-Windows.exe
+
+          - os: macos-latest
+            artifact_name: WipeVault
+            asset_name: WipeVault-macOS
+
+          - os: ubuntu-latest
+            artifact_name: WipeVault
+            asset_name: WipeVault-Linux
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 reportlab pyinstaller
+
+      # Linux requires a virtual display for PyQt6 to build without a real screen
+      - name: Install virtual display (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libxcb-xinerama0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xfixes0 libxkbcommon-x11-0
+
+      - name: Build with PyInstaller (Windows & macOS)
+        if: runner.os != 'Linux'
+        run: python -m PyInstaller WipeVault.spec
+
+      - name: Build with PyInstaller (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run python -m PyInstaller WipeVault.spec
+
+      - name: Rename output for upload (Windows)
+        if: runner.os == 'Windows'
+        run: copy dist\WipeVault.exe dist\${{ matrix.asset_name }}
+        shell: cmd
+
+      - name: Rename output for upload (macOS / Linux)
+        if: runner.os != 'Windows'
+        run: cp dist/WipeVault dist/${{ matrix.asset_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: WipeVault ${{ github.ref_name }}
+          body: |
+            ## WipeVault ${{ github.ref_name }}
+
+            ### Downloads
+            | Platform | File |
+            |---|---|
+            | Windows | `WipeVault-Windows.exe` |
+            | macOS | `WipeVault-macOS` |
+            | Linux | `WipeVault-Linux` |
+
+            ### Installation
+            **Windows:** Download `WipeVault-Windows.exe` and run it. You may need to click *More Info → Run Anyway* on the Windows SmartScreen prompt (expected for unsigned apps).
+
+            **macOS:** Download `WipeVault-macOS`, open Terminal, run:
+            ```bash
+            chmod +x WipeVault-macOS
+            ./WipeVault-macOS
+            ```
+            You may need to allow it in *System Settings → Privacy & Security*.
+
+            **Linux:** Download `WipeVault-Linux`, open Terminal, run:
+            ```bash
+            chmod +x WipeVault-Linux
+            sudo ./WipeVault-Linux
+            ```
+            > `sudo` is required for live wipes (writing to block devices).
+
+            ### Requirements
+            No Python installation needed — these are standalone executables.
+
+            ---
+            *WipeVault — Wipe with confidence. Certify with proof.*
+          files: |
+            dist/WipeVault-Windows.exe/WipeVault-Windows.exe
+            dist/WipeVault-macOS/WipeVault-macOS
+            dist/WipeVault-Linux/WipeVault-Linux
+          draft: false
+          prerelease: false
