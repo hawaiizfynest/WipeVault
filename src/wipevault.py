@@ -1,5 +1,5 @@
 """
-WipeVault v2.1.0 - Secure Drive Erasure Tool
+WipeVault v2.1.2 - Secure Drive Erasure Tool
 Cross-platform: Windows, macOS, Linux
 
 Supported wipe methods:
@@ -46,6 +46,61 @@ try:
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Custom CheckBox — cross-platform checkmark (Qt stylesheet image: is unreliable on Windows)
+# ---------------------------------------------------------------------------
+
+class CheckBox(QCheckBox):
+    """QCheckBox subclass that paints its own checkmark — works on all platforms."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setStyleSheet("QCheckBox { color: #E6EDF3; spacing: 7px; }")
+
+    def paintEvent(self, event):
+        from PyQt6.QtWidgets import QStyleOptionButton, QStyle
+        from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
+        from PyQt6.QtCore import QRect, QPoint
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        box_size = 15
+        y_off    = (self.height() - box_size) // 2
+        box_rect = QRect(0, y_off, box_size, box_size)
+
+        # Background
+        if self.isChecked():
+            painter.setBrush(QBrush(QColor("#1F6FEB")))
+            painter.setPen(QPen(QColor("#1F6FEB"), 1))
+        elif self.underMouse():
+            painter.setBrush(QBrush(QColor("#161B22")))
+            painter.setPen(QPen(QColor("#8B949E"), 1))
+        else:
+            painter.setBrush(QBrush(QColor("#161B22")))
+            painter.setPen(QPen(QColor("#30363D"), 1))
+
+        painter.drawRoundedRect(box_rect, 3, 3)
+
+        # Checkmark
+        if self.isChecked():
+            pen = QPen(QColor("white"), 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            ox, oy = box_rect.x(), box_rect.y()
+            painter.drawLine(ox+3, oy+7, ox+6, oy+10)
+            painter.drawLine(ox+6, oy+10, ox+12, oy+4)
+
+        # Label text
+        painter.setPen(QPen(QColor("#E6EDF3")))
+        text_rect = self.rect().adjusted(box_size + 7, 0, 0, 0)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter, self.text())
+
+        painter.end()
+
 
 
 # ---------------------------------------------------------------------------
@@ -820,14 +875,8 @@ class CompanyInfoDialog(QDialog):
         info.setStyleSheet("color: #8B949E; font-size: 11px;")
         layout.addWidget(info)
 
-        self.use_custom = QCheckBox("Add company branding to certificate")
+        self.use_custom = CheckBox("Add company branding to certificate")
         self.use_custom.stateChanged.connect(lambda s: self.fields_group.setEnabled(s == Qt.CheckState.Checked.value))
-        self.use_custom.setStyleSheet("""
-            QCheckBox::indicator { width:15px; height:15px; border:1px solid #30363D;
-                border-radius:3px; background:#161B22; }
-            QCheckBox::indicator:checked { background:#1F6FEB; border-color:#1F6FEB;
-                image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 11 11'><polyline points='1.5,5.5 4.5,8.5 9.5,2.5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>"); }
-        """)
         layout.addWidget(self.use_custom)
 
         self.fields_group = QGroupBox("Company Details")
@@ -953,8 +1002,9 @@ class WipeConfirmDialog(QDialog):
 class WipeVaultWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WipeVault v2.1 — Secure Drive Erasure")
-        self.setMinimumSize(1020, 700)
+        self.setWindowTitle("WipeVault v2.1.2 — Secure Drive Erasure")
+        self.setMinimumSize(1020, 720)
+        self.resize(1020, 820)   # Default taller so more drives visible on launch
         self.drives         = []
         self.current_worker = None
         self.last_worker    = None
@@ -1003,19 +1053,7 @@ class WipeVaultWindow(QMainWindow):
             QComboBox QAbstractItemView { background:#161B22; border:1px solid #30363D;
                 selection-background-color:#1F6FEB; color:#E6EDF3; }
             QLineEdit:focus, QComboBox:focus { border-color:#1F6FEB; }
-            QCheckBox { color:#E6EDF3; }
-            QCheckBox::indicator {
-                width:15px; height:15px;
-                border:1px solid #30363D;
-                border-radius:3px;
-                background:#161B22;
-            }
-            QCheckBox::indicator:hover { border-color:#8B949E; }
-            QCheckBox::indicator:checked {
-                background:#1F6FEB;
-                border-color:#1F6FEB;
-                image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 11 11'><polyline points='1.5,5.5 4.5,8.5 9.5,2.5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
-            }
+            QCheckBox { color:#E6EDF3; spacing:7px; }
             QDialog { background:#161B22; }
             QFormLayout QLabel { color:#8B949E; }
             QScrollBar:vertical { background:#161B22; width:8px; border-radius:4px; }
@@ -1036,7 +1074,7 @@ class WipeVaultWindow(QMainWindow):
         splitter.setStyleSheet("QSplitter::handle { background:#21262D; }")
         splitter.addWidget(self._make_top_panel())
         splitter.addWidget(self._make_bottom_panel())
-        splitter.setSizes([480, 240])
+        splitter.setSizes([560, 200])
         root.addWidget(splitter, 1)
 
         self.status_bar = QStatusBar()
@@ -1055,7 +1093,7 @@ class WipeVaultWindow(QMainWindow):
         logo.setStyleSheet("color:#00C2FF; letter-spacing:1px;")
         lay.addWidget(logo)
 
-        ver = QLabel("v2.1.0")
+        ver = QLabel("v2.1.2")
         ver.setStyleSheet("color:#30363D; font-size:11px; margin-left:6px;")
         lay.addWidget(ver)
 
@@ -1064,9 +1102,9 @@ class WipeVaultWindow(QMainWindow):
         lay.addWidget(tag)
         lay.addStretch()
 
-        self.dry_run_cb = QCheckBox("Simulation Mode (no writes)")
+        self.dry_run_cb = CheckBox("Simulation Mode (no writes)")
         self.dry_run_cb.setChecked(True)
-        self.dry_run_cb.setStyleSheet("color:#00C2FF; font-weight:bold;")
+        self.dry_run_cb.setStyleSheet("color:#00C2FF; font-weight:bold; spacing:7px;")
         lay.addWidget(self.dry_run_cb)
 
         rb = QPushButton("↻  Refresh Drives")
@@ -1094,10 +1132,10 @@ class WipeVaultWindow(QMainWindow):
         hdr = self.drive_table.horizontalHeader()
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.drive_table.setFixedHeight(165)
+        self.drive_table.setMinimumHeight(120)   # At least 4 rows visible; scales up freely
         self.drive_table.selectionModel().selectionChanged.connect(self._on_drive_selected)
         dl.addWidget(self.drive_table)
-        lay.addWidget(dg)
+        lay.addWidget(dg, 1)   # stretch=1 — table group expands to fill available space
 
         # Wipe method selector
         mg  = QGroupBox("Wipe Method")
@@ -1145,7 +1183,7 @@ class WipeVaultWindow(QMainWindow):
 
         # Row 1 — clear partition checkbox
         row1 = QHBoxLayout()
-        self.clear_part_cb = QCheckBox("Clear partition table after wipe")
+        self.clear_part_cb = CheckBox("Clear partition table after wipe")
         self.clear_part_cb.setToolTip(
             "Zeroes the MBR/GPT sectors, leaving the drive completely uninitialized.\n"
             "Recommended for drives being retired or sold."
@@ -1156,7 +1194,7 @@ class WipeVaultWindow(QMainWindow):
 
         # Row 2 — initialize checkbox + partition style
         row2 = QHBoxLayout()
-        self.init_disk_cb = QCheckBox("Initialize drive after wipe")
+        self.init_disk_cb = CheckBox("Initialize drive after wipe")
         self.init_disk_cb.setToolTip(
             "Writes a fresh partition table so the drive is ready to use immediately.\n"
             "Choose GPT (recommended for drives > 2 TB and modern systems) or MBR."
@@ -1432,7 +1470,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("WipeVault")
-    app.setApplicationVersion("2.1.0")
+    app.setApplicationVersion("2.1.2")
     app.setOrganizationName("WipeVault")
     window = WipeVaultWindow()
     window.show()
