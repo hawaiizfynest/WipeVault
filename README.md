@@ -1,5 +1,12 @@
 # 🔒 WipeVault
 
+[![Build WipeVault](https://github.com/HawaiizFynest/wipevault/actions/workflows/build.yml/badge.svg)](https://github.com/HawaiizFynest/wipevault/actions/workflows/build.yml)
+[![GitHub release (latest by tag)](https://img.shields.io/github/v/release/HawaiizFynest/wipevault?label=latest%20release&color=00C2FF)](https://github.com/HawaiizFynest/wipevault/releases/latest)
+[![GitHub all releases](https://img.shields.io/github/downloads/HawaiizFynest/wipevault/total?color=00FF9C&label=total%20downloads)](https://github.com/HawaiizFynest/wipevault/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/HawaiizFynest/wipevault/releases/latest)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Standard](https://img.shields.io/badge/wipe%20standard-DoD%205220.22--M-red)](https://github.com/HawaiizFynest/wipevault#-wipe-standard)
+
 **DoD 5220.22-M Secure Drive Erasure Tool**
 
 WipeVault is a cross-platform desktop application that performs certified, auditable three-pass data sanitization on hard drives, SSDs, USB drives, and NVMe drives — compliant with the U.S. Department of Defense 5220.22-M standard. Upon completion, it generates a professional PDF certificate of erasure documenting the serial number, drive details, wipe method, pass results, and technician/company information.
