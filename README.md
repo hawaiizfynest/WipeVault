@@ -28,7 +28,17 @@ WipeVault is a cross-platform desktop application that performs certified, audit
 
 ## 🖥️ Screenshots
 
-> *(Screenshots will be added here after first stable release)*
+**Main Window — Drive Detection & Method Selection**
+![WipeVault Main Window](assets/screenshots/screenshot_main.png)
+
+**Wipe Method Dropdown — All 6 Standards**
+![Wipe Method Dropdown](assets/screenshots/screenshot_dropdown.png)
+
+**Active Wipe — DoD 5220.28-STD 7-Pass In Progress**
+![Wipe In Progress](assets/screenshots/screenshot_wiping.png)
+
+**Wipe Complete — Certificate Ready**
+![Wipe Complete](assets/screenshots/screenshot_complete.png)
 
 ---
 
