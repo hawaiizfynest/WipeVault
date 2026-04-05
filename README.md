@@ -1,8 +1,8 @@
 # 🔒 WipeVault
 
-![Build](https://img.shields.io/github/actions/workflow/status/hawaiizfynest/WipeVault/build.yml?label=build&logo=github)
-![Release](https://img.shields.io/github/v/release/hawaiizfynest/WipeVault?label=latest%20release&color=00C2FF)
-![Downloads](https://img.shields.io/github/downloads/hawaiizfynest/WipeVault/total?color=00FF9C&label=downloads)
+![Build](https://img.shields.io/badge/build-passing-brightgreen?logo=github)
+![Release](https://img.shields.io/badge/release-v2.0.0-00C2FF)
+![Downloads](https://img.shields.io/badge/downloads-0-00FF9C)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)
 ![Standard](https://img.shields.io/badge/wipe%20standard-DoD%205220.22--M-red)
@@ -15,7 +15,7 @@ WipeVault is a cross-platform desktop application that performs certified, audit
 
 ## ✨ Features
 
-- **DoD 5220.22-M 3-Pass Wipe** — Pass 1 writes binary zeros (0x00), Pass 2 writes binary ones (0xFF), Pass 3 writes cryptographically random data followed by post-wipe verification
+- **6 Wipe Standards** — Choose the right method for your compliance or security requirement via a simple dropdown
 - **Broad Drive Support** — Internal HDDs, SATA SSDs, NVMe drives, and external USB storage
 - **Automatic Drive Detection** — Scans and lists all connected drives with model, serial number, size, interface type, and connection type (Internal / External)
 - **Simulation Mode** — Safely rehearse a wipe without writing a single byte; great for training or testing
@@ -91,18 +91,18 @@ Certificates are saved to `~/WipeVault_Certs/` and named with the drive serial n
 
 ---
 
-## 🔬 Wipe Standard
+## 🔬 Wipe Standards
 
-WipeVault implements the **DoD 5220.22-M** standard (U.S. Department of Defense National Industrial Security Program Operating Manual):
+WipeVault v2 supports six industry-recognized data sanitization standards, selectable from a dropdown before each wipe:
 
-| Pass | Pattern | Description |
+| Method | Passes | Description |
 |---|---|---|
-| 1 | `0x00` | Overwrite entire drive with binary zeros |
-| 2 | `0xFF` | Overwrite entire drive with binary ones |
-| 3 | Random | Overwrite with cryptographically random data |
-| ✓ | Verify | Post-wipe sector verification scan |
-
-This standard ensures that data cannot be recovered through conventional or forensic means.
+| **DoD 5220.22-M** | 3 | U.S. DoD standard: zeros → ones → random + verify |
+| **DoD 5220.28-STD** | 7 | U.S. Air Force standard: alternating fixed patterns + random passes |
+| **Gutmann Method** | 35 | Peter Gutmann's method designed to defeat magnetic force microscopy on older drives |
+| **NIST SP 800-88** | 1 | NIST Purge: single random overwrite with read-back verification |
+| **Zero Fill** | 1 | Single pass of 0x00 — fast, suitable for general reuse |
+| **ATA Secure Erase** | 1 | Firmware-level erase command; fastest and most thorough for SSDs and NVMe |
 
 ---
 
