@@ -1,7 +1,7 @@
 # 🔒 WipeVault
 
 ![Build](https://img.shields.io/badge/build-passing-brightgreen?logo=github)
-![Release](https://img.shields.io/badge/release-v2.0.0-00C2FF)
+![Release](https://img.shields.io/badge/release-v2.1.0-00C2FF)
 ![Downloads](https://img.shields.io/badge/downloads-0-00FF9C)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)
@@ -163,6 +163,8 @@ wipevault/
 - [x] Real-time wipe log with per-pass progress
 - [x] Simulation mode (dry run)
 - [x] Cross-platform builds via GitHub Actions (Windows, macOS, Linux)
+- [x] Clear partition table (MBR/GPT) after wipe
+- [x] Initialize drive with GPT or MBR after wipe
 
 ### 🔜 Coming Soon
 - [ ] NIST SP 800-88 Clear standard (in addition to Purge)

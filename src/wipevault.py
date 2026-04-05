@@ -1,5 +1,5 @@
 """
-WipeVault v2.0.0 - Secure Drive Erasure Tool
+WipeVault v2.1.0 - Secure Drive Erasure Tool
 Cross-platform: Windows, macOS, Linux
 
 Supported wipe methods:
@@ -9,6 +9,10 @@ Supported wipe methods:
   - NIST SP 800-88    (Purge — 1-pass random + verify)
   - Zero Fill         (1-pass zeros)
   - ATA Secure Erase  (firmware-level, NVMe/SATA)
+
+Post-wipe options:
+  - Clear partition table (MBR/GPT) — leaves drive uninitialized
+  - Initialize drive — writes a fresh MBR or GPT partition table
 """
 
 import sys
@@ -305,16 +309,25 @@ class WipeWorker(QThread):
     finished    = pyqtSignal(bool, str)
     log_update  = pyqtSignal(str)
 
-    def __init__(self, drive, method_key="dod3", dry_run=True):
+    def __init__(self, drive, method_key="dod3", dry_run=True,
+                 clear_partition=False, initialize_disk=False, partition_style="GPT"):
         super().__init__()
-        self.drive        = drive
-        self.method_key   = method_key
-        self.method       = WIPE_METHODS[method_key]
-        self.dry_run      = dry_run
-        self._cancelled   = False
-        self.start_time   = None
-        self.end_time     = None
-        self.pass_results = []
+        self.drive           = drive
+        self.method_key      = method_key
+        self.method          = WIPE_METHODS[method_key]
+        self.dry_run         = dry_run
+        self.clear_partition = clear_partition
+        self.initialize_disk = initialize_disk
+        self.partition_style = partition_style   # "GPT" or "MBR"
+        self._cancelled      = False
+        self.start_time      = None
+        self.end_time        = None
+        self.pass_results    = []
+        # Post-wipe operation results
+        self.partition_cleared     = False
+        self.partition_clear_error = ""
+        self.disk_initialized      = False
+        self.disk_init_error       = ""
 
     def cancel(self):
         self._cancelled = True
@@ -367,6 +380,30 @@ class WipeWorker(QThread):
             self.log_update.emit("\n[Verification] Post-wipe verification scan...")
             time.sleep(random.uniform(0.4, 0.9))
             self.log_update.emit("  → Verification complete. Drive contents confirmed erased.")
+
+        # ── Post-wipe: clear partition table ──────────────────────────────
+        if self.clear_partition and not self._cancelled:
+            self.log_update.emit("\n[Post-Wipe] Clearing partition table...")
+            self.progress.emit(99, "Clearing partition table...")
+            ok, err = self._clear_partition_table()
+            self.partition_cleared = ok
+            self.partition_clear_error = err
+            if ok:
+                self.log_update.emit("  → Partition table cleared. Drive is now uninitialized.")
+            else:
+                self.log_update.emit(f"  → WARNING: Could not clear partition table: {err}")
+
+        # ── Post-wipe: initialize drive ────────────────────────────────────
+        if self.initialize_disk and not self._cancelled:
+            self.log_update.emit(f"\n[Post-Wipe] Initializing drive with {self.partition_style}...")
+            self.progress.emit(99, f"Initializing drive ({self.partition_style})...")
+            ok, err = self._initialize_drive()
+            self.disk_initialized = ok
+            self.disk_init_error  = err
+            if ok:
+                self.log_update.emit(f"  → Drive initialized with {self.partition_style} partition table.")
+            else:
+                self.log_update.emit(f"  → WARNING: Could not initialize drive: {err}")
 
         self.end_time = datetime.now()
         duration = str(self.end_time - self.start_time).split(".")[0]
@@ -571,7 +608,27 @@ class CertificateGenerator:
             ["Duration",       dur],
         ], colWidths=[2*inch, 5*inch])
         t4.setStyle(self._tbl_style())
-        elems += [t4, Spacer(1, 0.2*inch)]
+        elems += [t4, Spacer(1, 0.15*inch)]
+
+        # Post-wipe operations
+        elems.append(Paragraph("Post-Wipe Operations", sec))
+        w = self.worker
+        clear_status = (
+            "Not requested" if not w.clear_partition
+            else ("✓ Completed" if w.partition_cleared else f"✗ Failed: {w.partition_clear_error}")
+        )
+        init_status = (
+            "Not requested" if not w.initialize_disk
+            else ("✓ Completed — " + w.partition_style if w.disk_initialized
+                  else f"✗ Failed: {w.disk_init_error}")
+        )
+        t5 = Table([
+            ["Operation","Status"],
+            ["Clear Partition Table", clear_status],
+            ["Initialize Drive",      init_status],
+        ], colWidths=[2*inch, 5*inch])
+        t5.setStyle(self._tbl_style())
+        elems += [t5, Spacer(1, 0.2*inch)]
 
         # Status banner
         all_ok = all(r["success"] for r in self.worker.pass_results)
@@ -623,6 +680,12 @@ class CertificateGenerator:
         ]
         for r in self.worker.pass_results:
             lines.append(f"Pass {r['pass']:>2}: {r['status']}")
+        w = self.worker
+        lines += [
+            "", "POST-WIPE OPERATIONS", "-"*40,
+            f"Clear Partition Table : {'Not requested' if not w.clear_partition else ('Completed' if w.partition_cleared else 'Failed: ' + w.partition_clear_error)}",
+            f"Initialize Drive      : {'Not requested' if not w.initialize_disk else (('Completed — ' + w.partition_style) if w.disk_initialized else 'Failed: ' + w.disk_init_error)}",
+        ]
         all_ok = all(r["success"] for r in self.worker.pass_results)
         lines += [
             "", "="*68,
@@ -697,10 +760,11 @@ class CompanyInfoDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 class WipeConfirmDialog(QDialog):
-    def __init__(self, drive, method_key, dry_run, parent=None):
+    def __init__(self, drive, method_key, dry_run, parent=None,
+                 clear_partition=False, initialize_disk=False, partition_style="GPT"):
         super().__init__(parent)
         self.setWindowTitle("Confirm Wipe")
-        self.setMinimumWidth(430)
+        self.setMinimumWidth(440)
         method = WIPE_METHODS[method_key]
         layout = QVBoxLayout(self)
         layout.setSpacing(14)
@@ -740,6 +804,19 @@ class WipeConfirmDialog(QDialog):
         details.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(details)
 
+        # Post-wipe summary
+        post_lines = []
+        if clear_partition:
+            post_lines.append("• Partition table will be cleared")
+        if initialize_disk:
+            post_lines.append(f"• Drive will be initialized with {partition_style}")
+        if post_lines:
+            post_lbl = QLabel("Post-wipe: " + "  |  ".join(post_lines))
+            post_lbl.setWordWrap(True)
+            post_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            post_lbl.setStyleSheet("color:#FFA657; font-size:11px;")
+            layout.addWidget(post_lbl)
+
         if not dry_run:
             warn = QLabel("All data on this drive will be unrecoverably destroyed.\nThis action cannot be undone.")
             warn.setWordWrap(True)
@@ -768,7 +845,7 @@ class WipeConfirmDialog(QDialog):
 class WipeVaultWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WipeVault v2 — Secure Drive Erasure")
+        self.setWindowTitle("WipeVault v2.1 — Secure Drive Erasure")
         self.setMinimumSize(1020, 700)
         self.drives         = []
         self.current_worker = None
@@ -853,7 +930,7 @@ class WipeVaultWindow(QMainWindow):
         logo.setStyleSheet("color:#00C2FF; letter-spacing:1px;")
         lay.addWidget(logo)
 
-        ver = QLabel("v2.0.0")
+        ver = QLabel("v2.1.0")
         ver.setStyleSheet("color:#30363D; font-size:11px; margin-left:6px;")
         lay.addWidget(ver)
 
@@ -936,6 +1013,48 @@ class WipeVaultWindow(QMainWindow):
         pl.addWidget(self.progress_msg)
         lay.addWidget(pg)
 
+        # Post-wipe options
+        po  = QGroupBox("Post-Wipe Options")
+        pol = QVBoxLayout(po)
+        pol.setSpacing(6)
+
+        # Row 1 — clear partition checkbox
+        row1 = QHBoxLayout()
+        self.clear_part_cb = QCheckBox("Clear partition table after wipe")
+        self.clear_part_cb.setToolTip(
+            "Zeroes the MBR/GPT sectors, leaving the drive completely uninitialized.\n"
+            "Recommended for drives being retired or sold."
+        )
+        row1.addWidget(self.clear_part_cb)
+        row1.addStretch()
+        pol.addLayout(row1)
+
+        # Row 2 — initialize checkbox + partition style
+        row2 = QHBoxLayout()
+        self.init_disk_cb = QCheckBox("Initialize drive after wipe")
+        self.init_disk_cb.setToolTip(
+            "Writes a fresh partition table so the drive is ready to use immediately.\n"
+            "Choose GPT (recommended for drives > 2 TB and modern systems) or MBR."
+        )
+        self.init_disk_cb.stateChanged.connect(self._on_init_disk_toggled)
+        row2.addWidget(self.init_disk_cb)
+
+        part_lbl = QLabel("Partition style:")
+        part_lbl.setStyleSheet("color:#8B949E; margin-left:16px;")
+        row2.addWidget(part_lbl)
+
+        self.partition_combo = QComboBox()
+        self.partition_combo.addItems(["GPT  (recommended — supports drives > 2 TB, UEFI)",
+                                       "MBR  (legacy — for older BIOS systems, drives ≤ 2 TB)"])
+        self.partition_combo.setFixedHeight(26)
+        self.partition_combo.setMinimumWidth(320)
+        self.partition_combo.setEnabled(False)
+        row2.addWidget(self.partition_combo)
+        row2.addStretch()
+        pol.addLayout(row2)
+
+        lay.addWidget(po)
+
         # Buttons
         br = QHBoxLayout()
         br.setSpacing(10)
@@ -986,6 +1105,14 @@ class WipeVaultWindow(QMainWindow):
 
     # ── Slots ──────────────────────────────────────────────────────────────
 
+    def _on_init_disk_toggled(self, state):
+        """Enable/disable partition style selector based on initialize checkbox."""
+        enabled = (state == Qt.CheckState.Checked.value)
+        self.partition_combo.setEnabled(enabled)
+        # If initializing, auto-check clear_partition too (you must clear before init)
+        if enabled:
+            self.clear_part_cb.setChecked(True)
+
     def _on_method_changed(self, idx):
         key    = self.method_combo.itemData(idx)
         method = WIPE_METHODS.get(key, {})
@@ -1028,7 +1155,12 @@ class WipeVaultWindow(QMainWindow):
         dry_run    = self.dry_run_cb.isChecked()
         method_key = self.method_combo.currentData()
 
-        dlg = WipeConfirmDialog(drive, method_key, dry_run, self)
+        dlg = WipeConfirmDialog(
+            drive, method_key, dry_run, self,
+            clear_partition=self.clear_part_cb.isChecked(),
+            initialize_disk=self.init_disk_cb.isChecked(),
+            partition_style=partition_style,
+        )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
@@ -1038,7 +1170,15 @@ class WipeVaultWindow(QMainWindow):
         self.wipe_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
 
-        worker = WipeWorker(drive, method_key=method_key, dry_run=dry_run)
+        partition_style = "GPT" if self.partition_combo.currentIndex() == 0 else "MBR"
+        worker = WipeWorker(
+            drive,
+            method_key=method_key,
+            dry_run=dry_run,
+            clear_partition=self.clear_part_cb.isChecked(),
+            initialize_disk=self.init_disk_cb.isChecked(),
+            partition_style=partition_style,
+        )
         worker.progress.connect(self._on_progress)
         worker.pass_update.connect(self._on_pass_update)
         worker.finished.connect(self._on_wipe_finished)
@@ -1121,7 +1261,7 @@ class WipeVaultWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("WipeVault")
-    app.setApplicationVersion("2.0.0")
+    app.setApplicationVersion("2.1.0")
     app.setOrganizationName("WipeVault")
     window = WipeVaultWindow()
     window.show()
