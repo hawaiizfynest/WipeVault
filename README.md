@@ -141,15 +141,32 @@ wipevault/
 
 ## 🔮 Planned Features (Roadmap)
 
-- [ ] Gutmann 35-pass wipe mode
-- [ ] NIST 800-88 Clear and Purge standards
-- [ ] ATA Secure Erase (NVMe and SATA)
-- [ ] Batch wipe multiple drives simultaneously
-- [ ] Certificate signing and tamper detection
-- [ ] Custom certificate logo/branding upload
+### ✅ Completed
+- [x] DoD 5220.22-M 3-pass wipe
+- [x] DoD 5220.28-STD 7-pass wipe
+- [x] Gutmann 35-pass wipe mode
+- [x] NIST SP 800-88 Purge standard
+- [x] Zero Fill single-pass wipe
+- [x] ATA Secure Erase (NVMe and SATA firmware command)
+- [x] Wipe method selector dropdown
+- [x] PDF certificate of erasure with company branding
+- [x] Real-time wipe log with per-pass progress
+- [x] Simulation mode (dry run)
+- [x] Cross-platform builds via GitHub Actions (Windows, macOS, Linux)
+
+### 🔜 Coming Soon
+- [ ] NIST SP 800-88 Clear standard (in addition to Purge)
+- [ ] Batch wipe — select and wipe multiple drives simultaneously
 - [ ] Wipe history log with searchable archive
-- [ ] Product key / device-ID licensing system
+- [ ] Custom certificate logo / company branding image upload
+- [ ] Certificate signing and tamper-evident verification
+
+### 🔐 Future (Commercial Release)
+- [ ] Product key / device-ID locking system
+- [ ] Secure licensing database integration
 - [ ] Encrypted application binary distribution
+- [ ] Enterprise reporting and audit export (CSV / JSON)
+- [ ] White-label certificate theming for IT service companies
 
 ---
 
