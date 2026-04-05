@@ -167,6 +167,7 @@ WIPE_METHODS = {
 # ---------------------------------------------------------------------------
 
 def get_drives():
+    """Detect physical drives. Returns empty list (not demo drives) on failure."""
     drives  = []
     os_name = platform.system()
     try:
@@ -176,9 +177,23 @@ def get_drives():
             drives = _get_drives_macos()
         elif os_name == "Windows":
             drives = _get_drives_windows()
+        else:
+            print(f"Unsupported OS: {os_name}")
     except Exception as e:
         print(f"Drive detection error: {e}")
-    return drives if drives else _get_demo_drives()
+    return drives
+
+
+def is_admin():
+    """Check if the current process has administrator/root privileges."""
+    try:
+        if platform.system() == "Windows":
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        else:
+            return os.geteuid() == 0
+    except Exception:
+        return False
 
 
 def _get_drives_linux():
@@ -246,12 +261,98 @@ def _get_drives_macos():
 
 
 def _get_drives_windows():
+    """Detect drives on Windows using PowerShell Get-PhysicalDisk (primary)
+    with wmic as fallback. Both require Administrator privileges."""
+    drives = _get_drives_windows_ps()
+    if not drives:
+        drives = _get_drives_windows_wmic()
+    return drives
+
+
+def _get_drives_windows_ps():
+    """Primary Windows detection via PowerShell Get-PhysicalDisk / Get-Disk."""
+    drives = []
+    ps_script = (
+        "Get-PhysicalDisk | ForEach-Object {"
+        "  $pd = $_;"
+        "  $disk = Get-Disk | Where-Object { $_.SerialNumber -eq $pd.SerialNumber } | Select-Object -First 1;"
+        "  [PSCustomObject]@{"
+        "    DeviceID    = if($disk){'\\\\.\\\\ PHYSICALDRIVE' + $disk.Number}else{$pd.DeviceId};"
+        "    DiskNumber  = if($disk){$disk.Number}else{''};"
+        "    Model       = $pd.FriendlyName;"
+        "    Size        = $pd.Size;"
+        "    Serial      = $pd.SerialNumber;"
+        "    MediaType   = $pd.MediaType;"
+        "    BusType     = $pd.BusType;"
+        "  }"
+        "} | ConvertTo-Json -Compress"
+    )
+    # Simpler, more reliable PowerShell query
+    ps_simple = (
+        "$disks = Get-Disk; "
+        "$disks | ForEach-Object { "
+        "  $d = $_; "
+        "  [PSCustomObject]@{ "
+        "    Number=$d.Number; Path=$d.Path; "
+        "    Model=$d.FriendlyName; Size=$d.Size; "
+        "    Serial=($d.SerialNumber -replace '\\s',''); "
+        "    BusType=$d.BusType; PartStyle=$d.PartitionStyle "
+        "  } "
+        "} | ConvertTo-Json -Compress"
+    )
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_simple],
+            capture_output=True, text=True, timeout=20,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            import json as _json
+            raw = r.stdout.strip()
+            # PowerShell returns object if single disk, array if multiple
+            data = _json.loads(raw)
+            if isinstance(data, dict):
+                data = [data]
+            for d in data:
+                num      = str(d.get("Number", ""))
+                model    = (d.get("Model") or "Unknown").strip()
+                size_b   = int(d.get("Size") or 0)
+                serial   = (d.get("Serial") or "").strip() or _fake_serial()
+                bus      = (d.get("BusType") or "").strip()
+                device   = "\\\\.\\PHYSICALDRIVE" + str(num)
+
+                if bus in ("NVMe",) or "NVMe" in model:
+                    iface_c, dtype = "NVMe", "Internal SSD"
+                elif bus in ("USB",):
+                    iface_c, dtype = "USB", "External / USB"
+                elif "SSD" in model or bus in ("SATA", "ATA"):
+                    iface_c, dtype = "SATA", "Internal SSD" if "SSD" in model else "Internal HDD/SSD"
+                elif bus in ("SCSI", "SAS"):
+                    iface_c, dtype = "SCSI", "Internal"
+                else:
+                    iface_c, dtype = bus or "SATA", "Internal"
+
+                drives.append({
+                    "device": device, "model": model,
+                    "size": f"{size_b/1e9:.1f}G" if size_b else "?",
+                    "type": dtype, "serial": serial,
+                    "interface": iface_c,
+                    "connection": "External" if iface_c == "USB" else "Internal",
+                })
+    except Exception as e:
+        print(f"PowerShell drive detection failed: {e}")
+    return drives
+
+
+def _get_drives_windows_wmic():
+    """Fallback Windows detection via wmic (deprecated in Win11 but still works)."""
     drives = []
     try:
         r = subprocess.run(
             ["wmic", "diskdrive", "get",
              "DeviceID,Model,Size,InterfaceType,SerialNumber,MediaType", "/format:csv"],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
         )
         if r.returncode == 0:
             lines = [l.strip() for l in r.stdout.strip().splitlines() if l.strip()]
@@ -277,12 +378,13 @@ def _get_drives_windows():
                     drives.append({
                         "device": row.get("DeviceID","").strip(), "model": model,
                         "size": f"{size_b/1e9:.1f}G" if size_b else "?",
-                        "type": dtype, "serial": row.get("SerialNumber","").strip() or _fake_serial(),
+                        "type": dtype,
+                        "serial": row.get("SerialNumber","").strip() or _fake_serial(),
                         "interface": iface_c,
                         "connection": "External" if "USB" in iface_c else "Internal"
                     })
     except Exception as e:
-        print(f"Windows drive detection failed: {e}")
+        print(f"wmic drive detection failed: {e}")
     return drives
 
 
@@ -720,6 +822,12 @@ class CompanyInfoDialog(QDialog):
 
         self.use_custom = QCheckBox("Add company branding to certificate")
         self.use_custom.stateChanged.connect(lambda s: self.fields_group.setEnabled(s == Qt.CheckState.Checked.value))
+        self.use_custom.setStyleSheet("""
+            QCheckBox::indicator { width:15px; height:15px; border:1px solid #30363D;
+                border-radius:3px; background:#161B22; }
+            QCheckBox::indicator:checked { background:#1F6FEB; border-color:#1F6FEB;
+                image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 11 11'><polyline points='1.5,5.5 4.5,8.5 9.5,2.5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>"); }
+        """)
         layout.addWidget(self.use_custom)
 
         self.fields_group = QGroupBox("Company Details")
@@ -853,7 +961,15 @@ class WipeVaultWindow(QMainWindow):
         self.last_drive     = None
         self._setup_style()
         self._setup_ui()
+        self._check_admin_on_startup()
         self._refresh_drives()
+
+    def _check_admin_on_startup(self):
+        """Warn the user on startup if not running as Administrator (Windows only)."""
+        if platform.system() == "Windows" and not is_admin():
+            self.status_bar.showMessage(
+                "⚠  Not running as Administrator — drive detection will be limited."
+            )
 
     def _setup_style(self):
         self.setStyleSheet("""
@@ -888,9 +1004,18 @@ class WipeVaultWindow(QMainWindow):
                 selection-background-color:#1F6FEB; color:#E6EDF3; }
             QLineEdit:focus, QComboBox:focus { border-color:#1F6FEB; }
             QCheckBox { color:#E6EDF3; }
-            QCheckBox::indicator { width:14px; height:14px; border:1px solid #30363D;
-                border-radius:3px; background:#161B22; }
-            QCheckBox::indicator:checked { background:#1F6FEB; border-color:#1F6FEB; }
+            QCheckBox::indicator {
+                width:15px; height:15px;
+                border:1px solid #30363D;
+                border-radius:3px;
+                background:#161B22;
+            }
+            QCheckBox::indicator:hover { border-color:#8B949E; }
+            QCheckBox::indicator:checked {
+                background:#1F6FEB;
+                border-color:#1F6FEB;
+                image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 11 11'><polyline points='1.5,5.5 4.5,8.5 9.5,2.5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+            }
             QDialog { background:#161B22; }
             QFormLayout QLabel { color:#8B949E; }
             QScrollBar:vertical { background:#161B22; width:8px; border-radius:4px; }
@@ -1123,6 +1248,7 @@ class WipeVaultWindow(QMainWindow):
 
     def _refresh_drives(self):
         self.status_bar.showMessage("Scanning for drives...")
+        QApplication.processEvents()  # Force UI update before blocking call
         self.drives = get_drives()
         self.drive_table.setRowCount(0)
         cmap = {"NVMe":"#00FF9C","USB":"#FFA657","SATA":"#79C0FF","SCSI":"#D2A8FF"}
@@ -1137,7 +1263,24 @@ class WipeVaultWindow(QMainWindow):
                     item.setForeground(QColor(cmap.get(text,"#E6EDF3")))
                 self.drive_table.setItem(row, col, item)
         self.wipe_btn.setEnabled(False)
-        self.status_bar.showMessage(f"Found {len(self.drives)} drive(s).")
+
+        if not self.drives:
+            if not is_admin():
+                self.status_bar.showMessage(
+                    "⚠  No drives found — WipeVault must be run as Administrator. "
+                    "Right-click the .exe and choose 'Run as administrator'."
+                )
+                QMessageBox.warning(
+                    self, "Administrator Required",
+                    "No drives were detected.\n\n"
+                    "WipeVault requires Administrator privileges to access physical drives.\n\n"
+                    "Please close this window, right-click WipeVault.exe, and select\n"
+                    "'Run as administrator', then try again."
+                )
+            else:
+                self.status_bar.showMessage("⚠  No drives detected. Check connections and try Refresh.")
+        else:
+            self.status_bar.showMessage(f"Found {len(self.drives)} drive(s).")
 
     def _on_drive_selected(self):
         self.wipe_btn.setEnabled(
@@ -1258,7 +1401,35 @@ class WipeVaultWindow(QMainWindow):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _request_admin_windows():
+    """Re-launch the process with UAC elevation on Windows if not already admin."""
+    try:
+        import ctypes
+        if ctypes.windll.shell32.IsUserAnAdmin():
+            return True
+        # Re-launch with elevation
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, " ".join(sys.argv), None, 1
+        )
+        return False  # Original process should exit
+    except Exception:
+        return True   # If UAC unavailable, continue anyway
+
+
 def main():
+    # On Windows, attempt UAC elevation automatically
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            if not ctypes.windll.shell32.IsUserAnAdmin():
+                # Re-launch elevated; exit this un-elevated instance
+                ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", sys.executable, " ".join(f'"{a}"' for a in sys.argv), None, 1
+                )
+                sys.exit(0)
+        except Exception:
+            pass  # UAC not available or already elevated — continue
+
     app = QApplication(sys.argv)
     app.setApplicationName("WipeVault")
     app.setApplicationVersion("2.1.0")
