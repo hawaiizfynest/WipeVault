@@ -1,7 +1,7 @@
 # 🔒 WipeVault
 
 ![Build](https://img.shields.io/badge/build-passing-brightgreen?logo=github)
-![Release](https://img.shields.io/badge/release-v2.1.2-00C2FF)
+![Release](https://img.shields.io/badge/release-v3.0.0-00C2FF)
 ![Downloads](https://img.shields.io/badge/downloads-0-00FF9C)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)
@@ -15,13 +15,18 @@ WipeVault is a cross-platform desktop application that performs certified, audit
 
 ## ✨ Features
 
-- **6 Wipe Standards** — Choose the right method for your compliance or security requirement via a simple dropdown
+- **7 Wipe Standards** — DoD 5220.22-M, DoD 5220.28-STD, Gutmann 35-pass, NIST SP 800-88 Purge, NIST SP 800-88 Clear, Zero Fill, and ATA Secure Erase — selectable from a dropdown
+- **Batch Wipe** — Select multiple drives with Ctrl/Shift and wipe them all simultaneously with per-drive progress tracking
+- **Wipe History Log** — Every wipe is automatically recorded to a searchable archive; filter by drive, method, date, or result and export to CSV
+- **Custom Certificate Logo** — Upload your company logo (PNG/JPG) to brand the PDF certificate
+- **Certificate Signing & Tamper Verification** — Every certificate is signed with an HMAC-SHA256 signature; verify any certificate with the built-in verifier to detect tampering
 - **Broad Drive Support** — Internal HDDs, SATA SSDs, NVMe drives, and external USB storage
-- **Automatic Drive Detection** — Scans and lists all connected drives with model, serial number, size, interface type, and connection type (Internal / External)
+- **Automatic Drive Detection** — Scans all connected drives with model, serial number, size, interface, and connection type; PowerShell primary with wmic fallback on Windows
 - **Simulation Mode** — Safely rehearse a wipe without writing a single byte; great for training or testing
-- **PDF Certificate of Erasure** — Generated on wipe completion; includes drive serial, wipe method, pass results, timestamps, and optional company branding
-- **Company Branding** — Optionally add your company name, website, technician name, and time zone to the certificate; defaults to WipeVault branding if left blank
+- **Post-Wipe Options** — Optionally clear the partition table and/or initialize the drive with a fresh GPT or MBR partition table
+- **PDF Certificate of Erasure** — Full audit trail including drive info, wipe method, pass results, post-wipe operations, timing, and tamper-evident signature
 - **Real-Time Wipe Log** — Live console-style output showing sector block progress for each pass
+- **Auto UAC Elevation** — Automatically requests Administrator privileges on Windows
 - **Cross-Platform** — Windows, macOS, Linux
 
 ---
@@ -110,7 +115,8 @@ WipeVault v2 supports six industry-recognized data sanitization standards, selec
 | **DoD 5220.22-M** | 3 | U.S. DoD standard: zeros → ones → random + verify |
 | **DoD 5220.28-STD** | 7 | U.S. Air Force standard: alternating fixed patterns + random passes |
 | **Gutmann Method** | 35 | Peter Gutmann's method designed to defeat magnetic force microscopy on older drives |
-| **NIST SP 800-88** | 1 | NIST Purge: single random overwrite with read-back verification |
+| **NIST SP 800-88 Purge** | 1 | Single random overwrite with read-back verification |
+| **NIST SP 800-88 Clear** | 2 | Zeros then ones overwrite; suitable for reuse within organization |
 | **Zero Fill** | 1 | Single pass of 0x00 — fast, suitable for general reuse |
 | **ATA Secure Erase** | 1 | Firmware-level erase command; fastest and most thorough for SSDs and NVMe |
 
@@ -156,29 +162,30 @@ wipevault/
 - [x] DoD 5220.28-STD 7-pass wipe
 - [x] Gutmann 35-pass wipe mode
 - [x] NIST SP 800-88 Purge standard
+- [x] NIST SP 800-88 Clear standard
 - [x] Zero Fill single-pass wipe
 - [x] ATA Secure Erase (NVMe and SATA firmware command)
 - [x] Wipe method selector dropdown
-- [x] PDF certificate of erasure with company branding
+- [x] Batch wipe — select and wipe multiple drives simultaneously with per-drive progress
+- [x] Wipe history log with searchable archive and CSV export
+- [x] Custom certificate logo / company branding image upload
+- [x] Certificate signing and HMAC-SHA256 tamper-evident verification
+- [x] PDF certificate of erasure with full audit trail
 - [x] Real-time wipe log with per-pass progress
 - [x] Simulation mode (dry run)
 - [x] Cross-platform builds via GitHub Actions (Windows, macOS, Linux)
 - [x] Clear partition table (MBR/GPT) after wipe
 - [x] Initialize drive with GPT or MBR after wipe
-
-### 🔜 Coming Soon
-- [ ] NIST SP 800-88 Clear standard (in addition to Purge)
-- [ ] Batch wipe — select and wipe multiple drives simultaneously
-- [ ] Wipe history log with searchable archive
-- [ ] Custom certificate logo / company branding image upload
-- [ ] Certificate signing and tamper-evident verification
+- [x] Auto UAC elevation on Windows
 
 ### 🔐 Future (Commercial Release)
 - [ ] Product key / device-ID locking system
 - [ ] Secure licensing database integration
 - [ ] Encrypted application binary distribution
-- [ ] Enterprise reporting and audit export (CSV / JSON)
+- [ ] Enterprise reporting and audit export (extended formats)
 - [ ] White-label certificate theming for IT service companies
+- [ ] Scheduled / automated wipe jobs
+- [ ] Network drive support
 
 ---
 
