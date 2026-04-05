@@ -1,8 +1,8 @@
 # 🔒 WipeVault
 
-![Build](https://img.shields.io/github/actions/workflow/status/HawaiizFynest/wipevault/build.yml?label=build&logo=github)
-![Release](https://img.shields.io/github/v/release/HawaiizFynest/wipevault?label=latest%20release&color=00C2FF)
-![Downloads](https://img.shields.io/github/downloads/HawaiizFynest/wipevault/total?color=00FF9C&label=downloads)
+![Build](https://img.shields.io/github/actions/workflow/status/hawaiizfynest/WipeVault/build.yml?label=build&logo=github)
+![Release](https://img.shields.io/github/v/release/hawaiizfynest/WipeVault?label=latest%20release&color=00C2FF)
+![Downloads](https://img.shields.io/github/downloads/hawaiizfynest/WipeVault/total?color=00FF9C&label=downloads)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)
 ![Standard](https://img.shields.io/badge/wipe%20standard-DoD%205220.22--M-red)
