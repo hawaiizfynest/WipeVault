@@ -1,5 +1,5 @@
 """
-WipeVault v3.0.5 - Secure Drive Erasure Tool
+WipeVault v3.0.6 - Secure Drive Erasure Tool
 Cross-platform: Windows, macOS, Linux
 
 Wipe methods:
@@ -619,11 +619,11 @@ class WipeWorker(QThread):
             if os_n == "Windows":
                 import ctypes, ctypes.wintypes
 
-                # Dismount all volumes first so Windows allows raw sector writes
+                # Step 1: Dismount all volumes so Windows allows raw sector writes
                 self._log("  [prep] Dismounting volumes...")
                 self._windows_dismount_volumes(dev)
 
-                # Open the physical drive for writing
+                # Step 2: Open the drive handle (read+write)
                 GENERIC_READ     = 0x80000000
                 GENERIC_WRITE    = 0x40000000
                 FILE_SHARE_READ  = 0x00000001
@@ -645,26 +645,67 @@ class WipeWorker(QThread):
                                        "Right-click WipeVault.exe → Run as Administrator.")
                     elif open_err == 32:
                         return False, ("Drive is in use (error 32). Open Disk Management, "
-                                       "right-click the volume on this drive, choose Offline, then retry.")
+                                       "right-click the volume on this drive, select Offline, then retry.")
                     elif open_err == 2:
                         return False, f"Drive not found (error 2). Device: {dev}"
                     else:
                         return False, f"Cannot open drive (Windows error {open_err}). Device: {dev}"
 
-                self._log("  [prep] Drive opened successfully for writing.")
+                self._log("  [prep] Drive opened successfully.")
 
                 try:
+                    # Step 3: Get actual drive size by seeking to end from open handle.
+                    # This is the most reliable method — works for USB, NVMe, SATA, everything.
+                    # FILE_END = 2, move 0 bytes from end to get size
+                    size_high = ctypes.wintypes.LONG(0)
+                    size_low  = ctypes.windll.kernel32.SetFilePointer(
+                        handle, 0, ctypes.byref(size_high), 2  # FILE_END
+                    )
+                    seek_err = ctypes.windll.kernel32.GetLastError()
+                    if size_low == 0xFFFFFFFF and seek_err != 0:
+                        # SetFilePointer failed — fall back to IOCTL methods
+                        drive_size = self._windows_drive_size_length_info(dev)
+                        if drive_size <= 0:
+                            drive_size = self._windows_drive_size_ps(dev)
+                    else:
+                        drive_size = (size_high.value << 32) | (size_low & 0xFFFFFFFF)
+
+                    # Seek back to start before writing
+                    ctypes.windll.kernel32.SetFilePointer(handle, 0, None, 0)  # FILE_BEGIN
+
+                    if drive_size <= 0:
+                        return False, (f"Could not determine drive size. "
+                                       f"Ensure the drive is recognized in Disk Management.")
+
+                    # Align drive_size down to nearest 512-byte sector boundary
+                    # Windows requires all writes to be sector-aligned
+                    SECTOR = 512
+                    drive_size = (drive_size // SECTOR) * SECTOR
+
+                    self._log(f"  [prep] Drive size: {drive_size / 1e9:.2f} GB ({drive_size:,} bytes)")
+
+                    # Step 4: Write — use sector-aligned 512KB blocks for USB compatibility
+                    # Large 4MB blocks sometimes trigger error 87 on USB; 512KB is safer
+                    USB_BLOCK = 512 * 1024   # 512 KB
+                    write_block = min(BLOCK, USB_BLOCK) if self.drive.get("interface") == "USB" else BLOCK
+                    if use_random is False:
+                        fill_block = bytes([pattern]) * write_block
+
                     written_total = 0
                     while written_total < drive_size:
                         if self._cancelled:
                             return False, "Cancelled"
                         remaining = drive_size - written_total
-                        chunk_sz  = min(BLOCK, remaining)
-                        chunk     = os.urandom(chunk_sz) if use_random else fill_block[:chunk_sz]
+                        chunk_sz  = min(write_block, remaining)
+                        # Ensure chunk is sector-aligned
+                        chunk_sz  = (chunk_sz // SECTOR) * SECTOR
+                        if chunk_sz == 0:
+                            break
+                        chunk = os.urandom(chunk_sz) if use_random else bytes([pattern]) * chunk_sz
 
                         bytes_written = ctypes.wintypes.DWORD(0)
                         write_ok = ctypes.windll.kernel32.WriteFile(
-                            handle, chunk, len(chunk),
+                            handle, chunk, chunk_sz,
                             ctypes.byref(bytes_written), None
                         )
                         write_err = ctypes.windll.kernel32.GetLastError()
@@ -673,10 +714,11 @@ class WipeWorker(QThread):
                             if write_err == 19:
                                 return False, "Drive is write-protected (error 19). Check the write-protect switch."
                             elif write_err == 5:
-                                return False, "Write access denied mid-wipe (error 5)."
+                                return False, "Write access denied (error 5). Ensure running as Administrator."
                             elif write_err == 87:
-                                return False, ("Invalid parameter (error 87). "
-                                               "Try unplugging and reinserting the drive.")
+                                return False, (f"Invalid parameter (error 87) at offset {written_total:,}. "
+                                               f"Drive size: {drive_size:,}, chunk: {chunk_sz:,}. "
+                                               f"Try a different USB port or cable.")
                             else:
                                 return False, (f"Write failed (Windows error {write_err}) "
                                                f"at offset {written_total:,} bytes.")
@@ -687,13 +729,18 @@ class WipeWorker(QThread):
                         total_mb = drive_size   // (1024 * 1024)
                         pat_s    = "random" if use_random else f"0x{pattern:02X}"
                         self.progress.emit(self._dev, pct, f"Writing {pat_s}... {mb:,}/{total_mb:,} MB")
-                        if written_total % (64 * 1024 * 1024) < BLOCK:
+                        if written_total % (64 * 1024 * 1024) < write_block:
                             self._log(f"  [{pat_s}] {mb:,} MB / {total_mb:,} MB written ({pct}%)")
                 finally:
                     ctypes.windll.kernel32.CloseHandle(handle)
 
             else:
                 # Linux / macOS — open device file directly
+                drive_size = self._get_drive_size_bytes()
+                if drive_size <= 0:
+                    return False, (f"Could not determine drive size for {dev}. "
+                                   f"Ensure running as root/sudo.")
+                self._log(f"  [prep] Drive size: {drive_size / 1e9:.2f} GB")
                 with open(dev, "wb", buffering=0) as f:
                     written_total = 0
                     while written_total < drive_size:
@@ -1412,7 +1459,7 @@ class BatchProgressWidget(QWidget):
 class WipeVaultWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WipeVault v3.0.5 — Secure Drive Erasure")
+        self.setWindowTitle("WipeVault v3.0.6 — Secure Drive Erasure")
         self.setMinimumSize(1060,760)
         self.resize(1060,880)
         self.drives=[]
@@ -1487,7 +1534,7 @@ class WipeVaultWindow(QMainWindow):
         logo=QLabel("🔒 WipeVault")
         logo.setFont(QFont("Segoe UI",18,QFont.Weight.Bold))
         logo.setStyleSheet("color:#00C2FF;letter-spacing:1px;")
-        ver=QLabel("v3.0.5"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
+        ver=QLabel("v3.0.6"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
         tag=QLabel("  Secure Drive Erasure"); tag.setStyleSheet("color:#8B949E;font-size:11px;")
         lay.addWidget(logo); lay.addWidget(ver); lay.addWidget(tag); lay.addStretch()
 
@@ -1839,7 +1886,7 @@ def main():
 
     app=QApplication(sys.argv)
     app.setApplicationName("WipeVault")
-    app.setApplicationVersion("3.0.5")
+    app.setApplicationVersion("3.0.6")
     app.setOrganizationName("WipeVault")
     win=WipeVaultWindow()
     win.show()
