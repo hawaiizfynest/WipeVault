@@ -1,5 +1,5 @@
 """
-WipeVault v3.0.3 - Secure Drive Erasure Tool
+WipeVault v3.0.4 - Secure Drive Erasure Tool
 Cross-platform: Windows, macOS, Linux
 
 Wipe methods:
@@ -487,22 +487,141 @@ class WipeWorker(QThread):
         return True, ""
 
     def _real_pass(self, pattern):
-        dev=self.drive["device"]; os_n=platform.system()
-        if os_n in("Linux","Darwin"):
-            cmd=(["dd","if=/dev/urandom",f"of={dev}","bs=4M","status=progress"] if pattern is None
-                 else ["bash","-c",f"tr '\\000' '\\{pattern:03o}' < /dev/zero | dd of={dev} bs=4M status=progress"])
-            r=subprocess.run(cmd,capture_output=True,text=True,timeout=86400)
-            if r.returncode!=0: return False,r.stderr[:200]
-        elif os_n=="Windows":
-            import re; m=re.search(r'PHYSICALDRIVE(\d+)',dev,re.I)
-            dn=m.group(1) if m else None
-            if not dn: return False,"Cannot determine disk number"
-            tmp=Path(os.environ.get("TEMP","."))/f"wv_{dn}.txt"
-            tmp.write_text(f"select disk {dn}\nclean all\n")
-            r=subprocess.run(["diskpart","/s",str(tmp)],capture_output=True,text=True,timeout=86400)
-            tmp.unlink(missing_ok=True)
-            if r.returncode!=0: return False,r.stderr[:200]
-        return True,""
+        """
+        Write byte pattern directly to the physical drive device using pure Python.
+        No external tools (no diskpart, no dd). Works on all platforms.
+        Windows: uses ctypes CreateFileW + WriteFile on the physical drive device.
+        Linux/macOS: opens device file directly.
+        """
+        dev    = self.drive["device"]
+        os_n   = platform.system()
+        BLOCK  = 4 * 1024 * 1024   # 4 MB write blocks
+
+        use_random = (pattern is None)
+        fill_block = None if use_random else bytes([pattern]) * BLOCK
+
+        # ── Get drive size ───────────────────────────────────────────────
+        drive_size = self._get_drive_size_bytes()
+        if drive_size <= 0:
+            return False, (f"Could not determine drive size for {dev}. "
+                           f"Try: (1) run as Administrator, "
+                           f"(2) unplug and reinsert the USB drive, "
+                           f"(3) ensure drive appears in Disk Management.")
+        self._log(f"  [prep] Drive size: {drive_size / 1e9:.2f} GB ({drive_size:,} bytes)")
+
+        try:
+            if os_n == "Windows":
+                import ctypes, ctypes.wintypes
+
+                # Dismount all volumes first so Windows allows raw sector writes
+                self._log("  [prep] Dismounting volumes...")
+                self._windows_dismount_volumes(dev)
+
+                # Open the physical drive for writing
+                GENERIC_READ     = 0x80000000
+                GENERIC_WRITE    = 0x40000000
+                FILE_SHARE_READ  = 0x00000001
+                FILE_SHARE_WRITE = 0x00000002
+                OPEN_EXISTING    = 3
+                INVALID_VALUE    = ctypes.wintypes.HANDLE(-1).value
+
+                handle = ctypes.windll.kernel32.CreateFileW(
+                    dev,
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    None, OPEN_EXISTING, 0, None
+                )
+                open_err = ctypes.windll.kernel32.GetLastError()
+
+                if handle == INVALID_VALUE:
+                    if open_err == 5:
+                        return False, ("Access denied (error 5). "
+                                       "Right-click WipeVault.exe → Run as Administrator.")
+                    elif open_err == 32:
+                        return False, ("Drive is in use (error 32). Open Disk Management, "
+                                       "right-click the volume on this drive, choose Offline, then retry.")
+                    elif open_err == 2:
+                        return False, f"Drive not found (error 2). Device: {dev}"
+                    else:
+                        return False, f"Cannot open drive (Windows error {open_err}). Device: {dev}"
+
+                self._log("  [prep] Drive opened successfully for writing.")
+
+                try:
+                    written_total = 0
+                    while written_total < drive_size:
+                        if self._cancelled:
+                            return False, "Cancelled"
+                        remaining = drive_size - written_total
+                        chunk_sz  = min(BLOCK, remaining)
+                        chunk     = os.urandom(chunk_sz) if use_random else fill_block[:chunk_sz]
+
+                        bytes_written = ctypes.wintypes.DWORD(0)
+                        write_ok = ctypes.windll.kernel32.WriteFile(
+                            handle, chunk, len(chunk),
+                            ctypes.byref(bytes_written), None
+                        )
+                        write_err = ctypes.windll.kernel32.GetLastError()
+
+                        if not write_ok:
+                            if write_err == 19:
+                                return False, "Drive is write-protected (error 19). Check the write-protect switch."
+                            elif write_err == 5:
+                                return False, "Write access denied mid-wipe (error 5)."
+                            elif write_err == 87:
+                                return False, ("Invalid parameter (error 87). "
+                                               "Try unplugging and reinserting the drive.")
+                            else:
+                                return False, (f"Write failed (Windows error {write_err}) "
+                                               f"at offset {written_total:,} bytes.")
+
+                        written_total += bytes_written.value
+                        pct      = int((written_total / drive_size) * 95)
+                        mb       = written_total // (1024 * 1024)
+                        total_mb = drive_size   // (1024 * 1024)
+                        pat_s    = "random" if use_random else f"0x{pattern:02X}"
+                        self.progress.emit(self._dev, pct, f"Writing {pat_s}... {mb:,}/{total_mb:,} MB")
+                        if written_total % (64 * 1024 * 1024) < BLOCK:
+                            self._log(f"  [{pat_s}] {mb:,} MB / {total_mb:,} MB written ({pct}%)")
+                finally:
+                    ctypes.windll.kernel32.CloseHandle(handle)
+
+            else:
+                # Linux / macOS — open device file directly
+                with open(dev, "wb", buffering=0) as f:
+                    written_total = 0
+                    while written_total < drive_size:
+                        if self._cancelled:
+                            return False, "Cancelled"
+                        remaining = drive_size - written_total
+                        chunk_sz  = min(BLOCK, remaining)
+                        chunk     = os.urandom(chunk_sz) if use_random else fill_block[:chunk_sz]
+                        f.write(chunk)
+                        written_total += chunk_sz
+                        pct      = int((written_total / drive_size) * 95)
+                        mb       = written_total // (1024 * 1024)
+                        total_mb = drive_size   // (1024 * 1024)
+                        pat_s    = "random" if use_random else f"0x{pattern:02X}"
+                        self.progress.emit(self._dev, pct, f"Writing {pat_s}... {mb:,}/{total_mb:,} MB")
+                        if written_total % (64 * 1024 * 1024) < BLOCK:
+                            self._log(f"  [{pat_s}] {mb:,} MB / {total_mb:,} MB written ({pct}%)")
+
+        except PermissionError:
+            return False, "Permission denied. Run WipeVault as Administrator (Windows) or root (Linux/macOS)."
+        except OSError as e:
+            return False, f"OS error {e.errno}: {e.strerror}"
+        except Exception as e:
+            msg = str(e)
+            if not msg:
+                try:
+                    import ctypes
+                    winerr = ctypes.windll.kernel32.GetLastError()
+                    msg = f"Windows error {winerr}. Ensure running as Administrator."
+                except Exception:
+                    msg = f"Unknown error on {dev}."
+            return False, msg
+
+        return True, ""
 
     def _ata_erase(self):
         dev=self.drive["device"]; os_n=platform.system()
@@ -536,7 +655,7 @@ class WipeWorker(QThread):
                 if not dn: return False,"Cannot determine disk number"
                 tmp=Path(os.environ.get("TEMP","."))/f"wv_clean_{dn}.txt"
                 tmp.write_text(f"select disk {dn}\nclean\n")
-                r=subprocess.run(["diskpart","/s",str(tmp)],capture_output=True,text=True,timeout=60)
+                r=subprocess.run(["diskpart","/s",str(tmp)],capture_output=True,text=True,timeout=60,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
                 tmp.unlink(missing_ok=True)
                 if r.returncode!=0: return False,r.stderr[:200]
         except Exception as e: return False,str(e)
@@ -561,7 +680,7 @@ class WipeWorker(QThread):
                 conv="gpt" if style=="GPT" else "mbr"
                 tmp=Path(os.environ.get("TEMP","."))/f"wv_init_{dn}.txt"
                 tmp.write_text(f"select disk {dn}\nclean\nconvert {conv}\n")
-                r=subprocess.run(["diskpart","/s",str(tmp)],capture_output=True,text=True,timeout=60)
+                r=subprocess.run(["diskpart","/s",str(tmp)],capture_output=True,text=True,timeout=60,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
                 tmp.unlink(missing_ok=True)
                 if r.returncode!=0: return False,r.stderr[:200]
         except FileNotFoundError as e: return False,f"Tool not found: {e}"
@@ -1187,7 +1306,7 @@ class BatchProgressWidget(QWidget):
 class WipeVaultWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WipeVault v3.0.3 — Secure Drive Erasure")
+        self.setWindowTitle("WipeVault v3.0.4 — Secure Drive Erasure")
         self.setMinimumSize(1060,760)
         self.resize(1060,880)
         self.drives=[]
@@ -1262,7 +1381,7 @@ class WipeVaultWindow(QMainWindow):
         logo=QLabel("🔒 WipeVault")
         logo.setFont(QFont("Segoe UI",18,QFont.Weight.Bold))
         logo.setStyleSheet("color:#00C2FF;letter-spacing:1px;")
-        ver=QLabel("v3.0.3"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
+        ver=QLabel("v3.0.4"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
         tag=QLabel("  Secure Drive Erasure"); tag.setStyleSheet("color:#8B949E;font-size:11px;")
         lay.addWidget(logo); lay.addWidget(ver); lay.addWidget(tag); lay.addStretch()
 
@@ -1614,7 +1733,7 @@ def main():
 
     app=QApplication(sys.argv)
     app.setApplicationName("WipeVault")
-    app.setApplicationVersion("3.0.3")
+    app.setApplicationVersion("3.0.4")
     app.setOrganizationName("WipeVault")
     win=WipeVaultWindow()
     win.show()
