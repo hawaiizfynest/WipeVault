@@ -1,5 +1,5 @@
 """
-WipeVault v3.0.6 - Secure Drive Erasure Tool
+WipeVault v3.0.7 - Secure Drive Erasure Tool
 Cross-platform: Windows, macOS, Linux
 
 Wipe methods:
@@ -654,24 +654,34 @@ class WipeWorker(QThread):
                 self._log("  [prep] Drive opened successfully.")
 
                 try:
-                    # Step 3: Get actual drive size by seeking to end from open handle.
-                    # This is the most reliable method — works for USB, NVMe, SATA, everything.
-                    # FILE_END = 2, move 0 bytes from end to get size
-                    size_high = ctypes.wintypes.LONG(0)
-                    size_low  = ctypes.windll.kernel32.SetFilePointer(
-                        handle, 0, ctypes.byref(size_high), 2  # FILE_END
+                    # Step 3: Get actual drive size using SetFilePointerEx (64-bit safe).
+                    # SetFilePointerEx avoids the 32-bit overflow bug that affects SetFilePointer
+                    # on drives larger than 2GB. It takes a LARGE_INTEGER and returns one.
+                    # FILE_END = 2
+                    LARGE_INTEGER = ctypes.c_int64
+
+                    new_pos = LARGE_INTEGER(0)
+                    seek_ok = ctypes.windll.kernel32.SetFilePointerEx(
+                        handle,
+                        LARGE_INTEGER(0),    # liDistanceToMove = 0
+                        ctypes.byref(new_pos),  # lpNewFilePointer (output)
+                        2                    # dwMoveMethod = FILE_END
                     )
                     seek_err = ctypes.windll.kernel32.GetLastError()
-                    if size_low == 0xFFFFFFFF and seek_err != 0:
-                        # SetFilePointer failed — fall back to IOCTL methods
+
+                    if seek_ok:
+                        drive_size = new_pos.value
+                    else:
+                        # SetFilePointerEx failed — fall back to IOCTL
+                        self._log(f"  [prep] SetFilePointerEx failed (err {seek_err}), trying IOCTL...")
                         drive_size = self._windows_drive_size_length_info(dev)
                         if drive_size <= 0:
                             drive_size = self._windows_drive_size_ps(dev)
-                    else:
-                        drive_size = (size_high.value << 32) | (size_low & 0xFFFFFFFF)
 
                     # Seek back to start before writing
-                    ctypes.windll.kernel32.SetFilePointer(handle, 0, None, 0)  # FILE_BEGIN
+                    ctypes.windll.kernel32.SetFilePointerEx(
+                        handle, LARGE_INTEGER(0), None, 0  # FILE_BEGIN
+                    )
 
                     if drive_size <= 0:
                         return False, (f"Could not determine drive size. "
@@ -1459,7 +1469,7 @@ class BatchProgressWidget(QWidget):
 class WipeVaultWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WipeVault v3.0.6 — Secure Drive Erasure")
+        self.setWindowTitle("WipeVault v3.0.7 — Secure Drive Erasure")
         self.setMinimumSize(1060,760)
         self.resize(1060,880)
         self.drives=[]
@@ -1534,7 +1544,7 @@ class WipeVaultWindow(QMainWindow):
         logo=QLabel("🔒 WipeVault")
         logo.setFont(QFont("Segoe UI",18,QFont.Weight.Bold))
         logo.setStyleSheet("color:#00C2FF;letter-spacing:1px;")
-        ver=QLabel("v3.0.6"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
+        ver=QLabel("v3.0.7"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
         tag=QLabel("  Secure Drive Erasure"); tag.setStyleSheet("color:#8B949E;font-size:11px;")
         lay.addWidget(logo); lay.addWidget(ver); lay.addWidget(tag); lay.addStretch()
 
@@ -1886,7 +1896,7 @@ def main():
 
     app=QApplication(sys.argv)
     app.setApplicationName("WipeVault")
-    app.setApplicationVersion("3.0.6")
+    app.setApplicationVersion("3.0.7")
     app.setOrganizationName("WipeVault")
     win=WipeVaultWindow()
     win.show()

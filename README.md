@@ -1,7 +1,7 @@
 # 🔒 WipeVault
 
 ![Build](https://img.shields.io/badge/build-passing-brightgreen?logo=github)
-![Release](https://img.shields.io/badge/release-v3.0.6-00C2FF)
+![Release](https://img.shields.io/badge/release-v3.0.7-00C2FF)
 ![Downloads](https://img.shields.io/badge/downloads-0-00FF9C)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)
