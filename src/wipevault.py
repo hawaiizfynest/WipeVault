@@ -1,5 +1,5 @@
 """
-WipeVault v3.0.2 - Secure Drive Erasure Tool
+WipeVault v3.0.3 - Secure Drive Erasure Tool
 Cross-platform: Windows, macOS, Linux
 
 Wipe methods:
@@ -400,7 +400,21 @@ class WipeWorker(QThread):
             if self.dry_run: return self._sim_pass(pn, total, pattern)
             if pattern=="ata_secure_erase": return self._ata_erase()
             return self._real_pass(pattern)
-        except Exception as e: return False, str(e)
+        except PermissionError as e:
+            return False, f"Permission denied: {e}. Run WipeVault as Administrator."
+        except OSError as e:
+            return False, f"OS error {e.errno}: {e.strerror} — {e.filename or self.drive['device']}"
+        except Exception as e:
+            msg = str(e)
+            if not msg:
+                # ctypes errors sometimes stringify to empty — grab Windows error code
+                try:
+                    import ctypes
+                    winerr = ctypes.windll.kernel32.GetLastError()
+                    msg = f"Windows error code {winerr} (no message). Device: {self.drive['device']}"
+                except Exception:
+                    msg = f"Unknown error on {self.drive['device']} — check you are running as Administrator."
+            return False, msg
 
     def _windows_dismount_volumes(self, dev):
         """Dismount all volumes on the given physical drive so raw writes are allowed.
@@ -1173,7 +1187,7 @@ class BatchProgressWidget(QWidget):
 class WipeVaultWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WipeVault v3.0.2 — Secure Drive Erasure")
+        self.setWindowTitle("WipeVault v3.0.3 — Secure Drive Erasure")
         self.setMinimumSize(1060,760)
         self.resize(1060,880)
         self.drives=[]
@@ -1248,7 +1262,7 @@ class WipeVaultWindow(QMainWindow):
         logo=QLabel("🔒 WipeVault")
         logo.setFont(QFont("Segoe UI",18,QFont.Weight.Bold))
         logo.setStyleSheet("color:#00C2FF;letter-spacing:1px;")
-        ver=QLabel("v3.0.2"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
+        ver=QLabel("v3.0.3"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
         tag=QLabel("  Secure Drive Erasure"); tag.setStyleSheet("color:#8B949E;font-size:11px;")
         lay.addWidget(logo); lay.addWidget(ver); lay.addWidget(tag); lay.addStretch()
 
@@ -1600,7 +1614,7 @@ def main():
 
     app=QApplication(sys.argv)
     app.setApplicationName("WipeVault")
-    app.setApplicationVersion("3.0.2")
+    app.setApplicationVersion("3.0.3")
     app.setOrganizationName("WipeVault")
     win=WipeVaultWindow()
     win.show()
