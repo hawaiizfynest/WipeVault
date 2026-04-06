@@ -403,15 +403,22 @@ class WipeWorker(QThread):
         except Exception as e: return False, str(e)
 
     def _sim_pass(self, pn, total, pattern):
-        steps=25; psz=98//total; base=(pn-1)*psz
-        for i in range(steps+1):
-            if self._cancelled: return False,"Cancelled"
-            pct=base+int((i/steps)*psz)
-            pat="ATA" if pattern=="ata_secure_erase" else "rnd" if pattern is None else f"0x{pattern:02X}"
-            self.progress.emit(self._dev, min(pct,98), f"Pass {pn}/{total} [{pat}] {i*100//steps}%")
+        """Simulate a wipe pass with realistic MB/total MB style progress."""
+        steps    = 30
+        psz      = 98 // total
+        base     = (pn - 1) * psz
+        fake_gb  = 500   # simulate 500 GB drive for demo
+        fake_mb  = fake_gb * 1024
+        pat      = "ATA" if pattern=="ata_secure_erase" else "random" if pattern is None else f"0x{pattern:02X}"
+        for i in range(steps + 1):
+            if self._cancelled: return False, "Cancelled"
+            pct      = base + int((i / steps) * psz)
+            done_mb  = int((i / steps) * fake_mb)
+            self.progress.emit(self._dev, min(pct, 98),
+                               f"Pass {pn}/{total} [{pat}] {done_mb}/{fake_mb} MB")
             self._log(f"  [{pat}] Sector block {i*512:08d}–{(i+1)*512:08d} written")
-            time.sleep(random.uniform(0.02,0.06))
-        return True,""
+            time.sleep(random.uniform(0.03, 0.07))
+        return True, ""
 
     def _real_pass(self, pattern):
         dev=self.drive["device"]; os_n=platform.system()
