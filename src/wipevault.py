@@ -1,5 +1,5 @@
 """
-WipeVault v3.0.1 - Secure Drive Erasure Tool
+WipeVault v3.0.2 - Secure Drive Erasure Tool
 Cross-platform: Windows, macOS, Linux
 
 Wipe methods:
@@ -401,6 +401,58 @@ class WipeWorker(QThread):
             if pattern=="ata_secure_erase": return self._ata_erase()
             return self._real_pass(pattern)
         except Exception as e: return False, str(e)
+
+    def _windows_dismount_volumes(self, dev):
+        """Dismount all volumes on the given physical drive so raw writes are allowed.
+        Required for USB drives and any drive with mounted partitions on Windows."""
+        import ctypes, ctypes.wintypes, re as _re
+        m = _re.search(r'PHYSICALDRIVE(\d+)', dev, _re.I)
+        if not m: return
+        disk_num = int(m.group(1))
+
+        GENERIC_READ     = 0x80000000
+        GENERIC_WRITE    = 0x40000000
+        FILE_SHARE_READ  = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        OPEN_EXISTING    = 3
+        FSCTL_LOCK_VOLUME    = 0x00090018
+        FSCTL_DISMOUNT_VOLUME= 0x00090020
+        IOCTL_DISK_UPDATE_PROPERTIES = 0x00070140
+
+        # Find all drive letters associated with this physical disk via PowerShell
+        try:
+            ps = (f"Get-Partition -DiskNumber {disk_num} | "
+                  "Get-Volume | Select-Object -ExpandProperty DriveLetter")
+            r = subprocess.run(
+                ["powershell","-NoProfile","-NonInteractive","-Command", ps],
+                capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0)
+            )
+            letters = [l.strip() for l in r.stdout.strip().splitlines() if l.strip() and len(l.strip())==1]
+        except Exception:
+            letters = []
+
+        for letter in letters:
+            vol_path = f"\\\\.\\{letter}:"
+            try:
+                vh = ctypes.windll.kernel32.CreateFileW(
+                    vol_path,
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    None, OPEN_EXISTING, 0, None
+                )
+                invalid = ctypes.wintypes.HANDLE(-1).value
+                if vh == invalid: continue
+                ret = ctypes.wintypes.DWORD(0)
+                # Lock then dismount — ignore failures (volume may already be dismounted)
+                ctypes.windll.kernel32.DeviceIoControl(
+                    vh, FSCTL_LOCK_VOLUME, None, 0, None, 0, ctypes.byref(ret), None)
+                ctypes.windll.kernel32.DeviceIoControl(
+                    vh, FSCTL_DISMOUNT_VOLUME, None, 0, None, 0, ctypes.byref(ret), None)
+                ctypes.windll.kernel32.CloseHandle(vh)
+                self._log(f"  [prep] Volume {letter}: dismounted.")
+            except Exception as e:
+                self._log(f"  [prep] Could not dismount {letter}: {e}")
 
     def _sim_pass(self, pn, total, pattern):
         """Simulate a wipe pass with realistic MB/total MB style progress."""
@@ -1121,7 +1173,7 @@ class BatchProgressWidget(QWidget):
 class WipeVaultWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WipeVault v3.0.1 — Secure Drive Erasure")
+        self.setWindowTitle("WipeVault v3.0.2 — Secure Drive Erasure")
         self.setMinimumSize(1060,760)
         self.resize(1060,880)
         self.drives=[]
@@ -1196,7 +1248,7 @@ class WipeVaultWindow(QMainWindow):
         logo=QLabel("🔒 WipeVault")
         logo.setFont(QFont("Segoe UI",18,QFont.Weight.Bold))
         logo.setStyleSheet("color:#00C2FF;letter-spacing:1px;")
-        ver=QLabel("v3.0.1"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
+        ver=QLabel("v3.0.2"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
         tag=QLabel("  Secure Drive Erasure"); tag.setStyleSheet("color:#8B949E;font-size:11px;")
         lay.addWidget(logo); lay.addWidget(ver); lay.addWidget(tag); lay.addStretch()
 
@@ -1548,7 +1600,7 @@ def main():
 
     app=QApplication(sys.argv)
     app.setApplicationName("WipeVault")
-    app.setApplicationVersion("3.0.1")
+    app.setApplicationVersion("3.0.2")
     app.setOrganizationName("WipeVault")
     win=WipeVaultWindow()
     win.show()
