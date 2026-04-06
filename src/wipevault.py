@@ -1,5 +1,5 @@
 """
-WipeVault v3.0.4 - Secure Drive Erasure Tool
+WipeVault v3.0.5 - Secure Drive Erasure Tool
 Cross-platform: Windows, macOS, Linux
 
 Wipe methods:
@@ -467,6 +467,112 @@ class WipeWorker(QThread):
                 self._log(f"  [prep] Volume {letter}: dismounted.")
             except Exception as e:
                 self._log(f"  [prep] Could not dismount {letter}: {e}")
+
+    def _get_drive_size_bytes(self) -> int:
+        """Return drive size in bytes using multiple fallback methods."""
+        dev  = self.drive["device"]
+        os_n = platform.system()
+        try:
+            if os_n == "Windows":
+                # Try methods in order of reliability
+                size = self._windows_drive_size_ioctl(dev)
+                if size > 0: return size
+                size = self._windows_drive_size_length_info(dev)
+                if size > 0: return size
+                size = self._windows_drive_size_ps(dev)
+                if size > 0: return size
+                # Last resort: use the size string from drive detection
+                size_str = self.drive.get("size", "0G").replace("G","").replace("T","000").strip()
+                try: return int(float(size_str) * 1_000_000_000)
+                except Exception: pass
+                return 0
+            elif os_n == "Linux":
+                import fcntl, struct
+                BLKGETSIZE64 = 0x80081272
+                with open(dev, "rb") as f:
+                    buf = fcntl.ioctl(f.fileno(), BLKGETSIZE64, b" " * 8)
+                    return struct.unpack("Q", buf)[0]
+            elif os_n == "Darwin":
+                r = subprocess.run(["diskutil","info",dev], capture_output=True, text=True, timeout=10)
+                for line in r.stdout.splitlines():
+                    if "Disk Size:" in line or "Total Size:" in line:
+                        import re
+                        m = re.search(r"\((\d+)\s+Bytes\)", line)
+                        if m: return int(m.group(1))
+        except Exception as e:
+            print(f"Drive size detection failed: {e}")
+        return 0
+
+    def _windows_open_drive(self, dev, write=False):
+        """Open a Windows physical drive handle. Returns (handle, invalid_value)."""
+        import ctypes, ctypes.wintypes
+        GENERIC_READ    = 0x80000000
+        GENERIC_WRITE   = 0x40000000
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE= 0x00000002
+        OPEN_EXISTING   = 3
+        access = (GENERIC_READ | GENERIC_WRITE) if write else GENERIC_READ
+        handle = ctypes.windll.kernel32.CreateFileW(
+            dev, access,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None, OPEN_EXISTING, 0, None
+        )
+        invalid = ctypes.wintypes.HANDLE(-1).value
+        return handle, invalid
+
+    def _windows_drive_size_ioctl(self, dev) -> int:
+        """Get size via IOCTL_DISK_GET_DRIVE_GEOMETRY_EX."""
+        import ctypes, ctypes.wintypes
+        handle, invalid = self._windows_open_drive(dev)
+        if handle == invalid: return 0
+        try:
+            IOCTL_DISK_GET_DRIVE_GEOMETRY_EX = 0x000700A0
+            class DISK_GEOMETRY_EX(ctypes.Structure):
+                _fields_ = [("DiskSize", ctypes.c_int64),
+                             ("Geometry", ctypes.c_byte * 24),
+                             ("Data",     ctypes.c_byte * 4)]
+            geom = DISK_GEOMETRY_EX()
+            ret  = ctypes.wintypes.DWORD(0)
+            ctypes.windll.kernel32.DeviceIoControl(
+                handle, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
+                None, 0, ctypes.byref(geom), ctypes.sizeof(geom),
+                ctypes.byref(ret), None)
+            return geom.DiskSize
+        except Exception: return 0
+        finally: ctypes.windll.kernel32.CloseHandle(handle)
+
+    def _windows_drive_size_length_info(self, dev) -> int:
+        """Get size via IOCTL_DISK_GET_LENGTH_INFO — more reliable for USB drives."""
+        import ctypes, ctypes.wintypes
+        handle, invalid = self._windows_open_drive(dev)
+        if handle == invalid: return 0
+        try:
+            IOCTL_DISK_GET_LENGTH_INFO = 0x0007405C
+            length    = ctypes.c_int64(0)
+            ret       = ctypes.wintypes.DWORD(0)
+            ctypes.windll.kernel32.DeviceIoControl(
+                handle, IOCTL_DISK_GET_LENGTH_INFO,
+                None, 0, ctypes.byref(length), 8,
+                ctypes.byref(ret), None)
+            return length.value
+        except Exception: return 0
+        finally: ctypes.windll.kernel32.CloseHandle(handle)
+
+    def _windows_drive_size_ps(self, dev) -> int:
+        """Get size via PowerShell Get-Disk — works for all drive types including USB."""
+        import re
+        m = re.search(r'PHYSICALDRIVE(\d+)', dev, re.I)
+        if not m: return 0
+        try:
+            r = subprocess.run(
+                ["powershell","-NoProfile","-NonInteractive","-Command",
+                 f"(Get-Disk -Number {m.group(1)}).Size"],
+                capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+            if r.returncode == 0 and r.stdout.strip():
+                return int(r.stdout.strip())
+        except Exception: pass
+        return 0
 
     def _sim_pass(self, pn, total, pattern):
         """Simulate a wipe pass with realistic MB/total MB style progress."""
@@ -1306,7 +1412,7 @@ class BatchProgressWidget(QWidget):
 class WipeVaultWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WipeVault v3.0.4 — Secure Drive Erasure")
+        self.setWindowTitle("WipeVault v3.0.5 — Secure Drive Erasure")
         self.setMinimumSize(1060,760)
         self.resize(1060,880)
         self.drives=[]
@@ -1381,7 +1487,7 @@ class WipeVaultWindow(QMainWindow):
         logo=QLabel("🔒 WipeVault")
         logo.setFont(QFont("Segoe UI",18,QFont.Weight.Bold))
         logo.setStyleSheet("color:#00C2FF;letter-spacing:1px;")
-        ver=QLabel("v3.0.4"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
+        ver=QLabel("v3.0.5"); ver.setStyleSheet("color:#30363D;font-size:11px;margin-left:6px;")
         tag=QLabel("  Secure Drive Erasure"); tag.setStyleSheet("color:#8B949E;font-size:11px;")
         lay.addWidget(logo); lay.addWidget(ver); lay.addWidget(tag); lay.addStretch()
 
@@ -1733,7 +1839,7 @@ def main():
 
     app=QApplication(sys.argv)
     app.setApplicationName("WipeVault")
-    app.setApplicationVersion("3.0.4")
+    app.setApplicationVersion("3.0.5")
     app.setOrganizationName("WipeVault")
     win=WipeVaultWindow()
     win.show()
